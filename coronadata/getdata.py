@@ -152,6 +152,7 @@ class get_rki():
         n_batch = math.floor(len(results_ids) / n)
 
         self.raw_data = query_rki(n, results_ids, n_batch)
+        self.raw_data['Meldedatum'] = pd.to_datetime(self.raw_data['Meldedatum'], unit='ms')
 
     def plot(self, **kwargs):
         figsize = kwargs['figsize'] if 'figsize' in kwargs else (10, 5)

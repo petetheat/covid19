@@ -5,6 +5,10 @@ import errno
 from datetime import datetime
 
 import matplotlib.pyplot as plt
+import requests
+from tqdm import tqdm
+
+import math
 
 
 def get_index(x):
@@ -93,5 +97,94 @@ class DataLoader:
         ax.set_title(country)
 
 
+def query_rki(n, results_ids, n_batch):
+    result_list = []
+
+    tqdm.write('Querying data from RKI...')
+    for b in tqdm(range(n_batch)):
+        idx_start = b * n
+        idx_end = idx_start + n
+        test_ids = results_ids[idx_start:idx_end]
+        test_ids = [str(i) for i in test_ids]
+
+        id_query = '%2C+'.join(test_ids)
+
+        query = 'https://services7.arcgis.com/mOBPykOjAyBO2ZKk/arcgis/rest/services/RKI_COVID19/FeatureServer/0/query?where=1%3D1&objectIds=' + id_query + '&time=&resultType=none&outFields=*&returnIdsOnly=false&returnUniqueIdsOnly=false&returnCountOnly=false&returnDistinctValues=false&cacheHint=false&orderByFields=&groupByFieldsForStatistics=&outStatistics=&having=&resultOffset=&resultRecordCount=&sqlFormat=none&f=pjson&token='
+
+        r = requests.get(query)
+        results = r.json()
+
+        result_list.append(results)
+
+    idx_start = n_batch * n
+    test_ids = results_ids[idx_start:]
+    test_ids = [str(i) for i in test_ids]
+
+    id_query = '%2C+'.join(test_ids)
+
+    query = 'https://services7.arcgis.com/mOBPykOjAyBO2ZKk/arcgis/rest/services/RKI_COVID19/FeatureServer/0/query?where=1%3D1&objectIds=' + id_query + '&time=&resultType=none&outFields=*&returnIdsOnly=false&returnUniqueIdsOnly=false&returnCountOnly=false&returnDistinctValues=false&cacheHint=false&orderByFields=&groupByFieldsForStatistics=&outStatistics=&having=&resultOffset=&resultRecordCount=&sqlFormat=none&f=pjson&token='
+
+    r = requests.get(query)
+    results = r.json()
+
+    result_list.append(results)
+
+    x = []
+    tqdm.write('Creating pandas dataframe...')
+    for r in tqdm(result_list):
+        for f in r['features']:
+            x.append(f['attributes'])
+
+    return pd.DataFrame(x)
 
 
+class get_rki():
+    def __init__(self):
+
+        # get object IDs:
+        query = 'https://services7.arcgis.com/mOBPykOjAyBO2ZKk/arcgis/rest/services/RKI_COVID19/FeatureServer/0/query?where=1%3D1&objectIds=&time=&resultType=none&outFields=*&returnIdsOnly=true&returnUniqueIdsOnly=false&returnCountOnly=false&returnDistinctValues=false&cacheHint=false&orderByFields=&groupByFieldsForStatistics=&outStatistics=&having=&resultOffset=&resultRecordCount=&sqlFormat=none&f=pjson&token='
+        r = requests.get(query)
+        results_ids = r.json()['objectIds']
+
+        self.ids = results_ids
+
+        n = 150
+        n_batch = math.floor(len(results_ids) / n)
+
+        self.raw_data = query_rki(n, results_ids, n_batch)
+
+    def plot(self, **kwargs):
+        figsize = kwargs['figsize'] if 'figsize' in kwargs else (10, 5)
+
+        if 'region' in kwargs:
+            region = kwargs['region']
+
+            if region not in self.raw_data['Bundesland'].unique():
+                raise ValueError("Unknown region '%s'. "
+                                 "Possible values are %s" % (region,
+                                                             ', '.join(self.raw_data.Bundesland.unique())))
+
+            df = self.raw_data.groupby(['Bundesland', 'Meldedatum']).sum().groupby('Bundesland').cumsum().reset_index()
+            df.rename(columns={'Meldedatum': 'Date', 'AnzahlFall': 'Cases confirmed',
+                               'AnzahlTodesfall': 'Cases deaths', 'AnzahlGenesen': 'Cases Recovered',
+                               'Bundesland': 'Region'}, inplace=True)
+            df['Cases active'] = df['Cases confirmed'] - df['Cases deaths'] - df['Cases Recovered']
+        else:
+            df = self.raw_data.groupby(['Meldedatum']).sum()
+            df.reset_index(inplace=True)
+            df['Cases confirmed'] = df['AnzahlFall'].cumsum()
+            df['Cases deaths'] = df['AnzahlTodesfall'].cumsum()
+            df['Cases Recovered'] = df['AnzahlGenesen'].cumsum()
+            df['Cases active'] = df['Cases confirmed'] - df['Cases deaths'] - df['Cases Recovered']
+            df.rename(columns={'Meldedatum': 'Date'}, inplace=True)
+            df['Region'] = 'Germany'
+            region = 'Germany'
+
+        print(df.columns)
+
+        fig, ax = plt.subplots(figsize=figsize)
+        df.loc[df['Region'] == region].plot(x='Date', y=['Cases active', 'Cases confirmed',
+                                                         'Cases Recovered', 'Cases deaths'],
+                                            ax=ax)
+        ax.grid()
+        ax.set_title(region)

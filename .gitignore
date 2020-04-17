@@ -129,3 +129,5 @@ dmypy.json
 .pyre/
 
 .idea/
+/RKI_data_16042020.csv
+/RKI_data_17042020.csv
